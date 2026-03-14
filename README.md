@@ -13,6 +13,7 @@
 
 Instead of entering data one by one through the web interface, teachers simply export their spreadsheets from Google Sheets as `.csv` files, and Selene handles the rest: it reads the data with **pandas** and uses **Selenium WebDriver** to automatically navigate and fill in the platform.
 
+![Demo](assets/Selene2.0Lanzamiento.gif)
 ---
 
 ### ✨ Features
@@ -132,6 +133,7 @@ Franco Brondo — francobrondo@gmail.com
 
 En lugar de cargar los datos uno por uno desde el navegador, el docente simplemente exporta su planilla desde Google Sheets en formato `.csv`, y Selene hace el resto: lee los datos con **pandas** y usa **Selenium WebDriver** para navegar y completar la plataforma de forma automática.
 
+![Demo](assets/Selene2.0Lanzamiento.gif)
 ---
 
 ### ✨ Funcionalidades
@@ -237,3 +239,6 @@ Las siguientes funcionalidades están previstas para versiones futuras, según l
 ### 📬 Contacto
 
 Franco Brondo — francobrondo@gmail.com
+
+
+
