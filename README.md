@@ -49,7 +49,7 @@ Instead of entering data one by one through the web interface, teachers simply e
 
 ```bash
 # Clone the repository
-git clone https://github.com/francobrondo/Selene2.0.git
+git clone https://github.com/Frank994-droid/Selene2.0.git
 cd Selene2.0
 
 # Create and activate virtual environment
@@ -168,7 +168,7 @@ En lugar de cargar los datos uno por uno desde el navegador, el docente simpleme
 
 ```bash
 # Clonar el repositorio
-git clone https://github.com/francobrondo/Selene2.0.git
+git clone https://github.com/Frank994-droid/Selene2.0.git
 cd Selene2.0
 
 # Crear y activar entorno virtual
