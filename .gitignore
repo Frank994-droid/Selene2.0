@@ -1,0 +1,28 @@
+# Credenciales - MUY IMPORTANTE
+credentials.json
+ui/credentials.json
+
+# Entorno virtual
+.venv/
+
+# Caché de Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Build y distribución
+build/
+dist/
+
+# Logs
+*.log
+geckodriver.log
+
+# VS Code
+.vscode/
+
+# WebDriver ejecutable (si está en /drivers)
+drivers/
+
+# Datos locales (si tienen info sensible)
+# data/
