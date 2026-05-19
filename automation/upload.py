@@ -1,6 +1,7 @@
 import re
 import pandas as pd
 import time
+from pyparsing import col
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.wait import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -13,15 +14,12 @@ class Upload:
     def __init__(self, driver, df):
         self.driver = driver
         self.df = df
-        
-
-
-    
 
     def subir_notas(self, col_inicio, col_fin):
+
         # Cambiar a la pestaña del formulario
         ventanas = self.driver.window_handles
-        self.driver.switch_to.window(ventanas[-1])  # Cambia a la última pestaña abierta
+        self.driver.switch_to.window(ventanas[-1])
 
         columnas = list(self.df.columns)
 
@@ -38,40 +36,30 @@ class Upload:
 
         columnas_a_procesar = columnas[idx_inicio:idx_fin + 1]
 
-        
-
-        match = re.search(r"\d+", col_inicio)
-        if not match:
-            print("No se pudo determinar el número de evaluación.")
-            return
-
-        eval_num = match.group()   # "8"
-
-        def columna_valida(col, eval_num):
-            col = col.strip()
-
-            # excluir EVAL i (con o sin espacio)
-            if col == f"EVAL{eval_num}" or col == f"EVAL {eval_num}":
-                return False
-
-            # aceptar SOLO estas
-            if col == f"NE{eval_num}":
+        def columna_valida(col):
+            col = str(col).strip()
+            if re.match(r"^NE\d+$", col):
                 return True
-
-            if col == f"E{eval_num}R1":
+            if re.match(r"^E\d+R[12]$", col):
                 return True
-
-            if col == f"E{eval_num}R2":
-                return True
-
-            # todo lo demás se descarta
             return False
 
-        
         columnas_a_procesar = [
-        col for col in columnas_a_procesar
-        if columna_valida(col, eval_num)
+            col for col in columnas_a_procesar
+            if columna_valida(col)
         ]
+
+        # Limpiar filas totalmente vacías y resetear índices posicionales
+        df_clean = self.df.dropna(how="all").reset_index(drop=True)
+
+        aprendizajes_por_evaluacion = []
+        if "Aprendizajes" in df_clean.columns:
+            aprendizajes_por_evaluacion = (
+                df_clean["Aprendizajes"]
+                .fillna("")
+                .astype(str)
+                .tolist()[:8]
+            )
 
         for col in columnas_a_procesar:
 
@@ -80,9 +68,9 @@ class Upload:
 
             print(f"Procesando columna: {col}")
 
-            for i in range(len(self.df)):
+            for i in range(len(df_clean)):
 
-                calif = self.df.at[i, col]
+                calif = df_clean.at[i, col]
 
                 if pd.isna(calif):
                     continue
@@ -93,31 +81,123 @@ class Upload:
                     continue
 
                 try:
+
                     print(f"  → fila {i}, columna {col}")
 
                     nota_option = WebDriverWait(self.driver, 10).until(
                         EC.presence_of_element_located((By.XPATH, calif))
                     )
+
                     nota_option.click()
-                    time.sleep(0.5)
-                    
+
+                    time.sleep(2)
+
+                    # ---------------------------------------------------
+                    # DETECTAR SI LA NOTA ES MENOR A 7
+                    # ---------------------------------------------------
+
+                    nota_match = re.search(r'@value="(\d+)"', calif)
+
+                    if nota_match:
+
+                        nota = int(nota_match.group(1))
+
+                        if 1 <= nota < 7:
+
+                            print(f"    Nota {nota}: cargando aprendizajes")
+
+                                                        # Esperar iframe emergente
+                            iframe = WebDriverWait(self.driver, 10).until(
+                                EC.presence_of_element_located(
+                                    (
+                                        By.CSS_SELECTOR,
+                                        "iframe.fancybox-iframe"
+                                    )
+                                )
+                            )
+
+                            # Entrar al iframe
+                            self.driver.switch_to.frame(iframe)
+
+                            # ---------------------------------------------------
+                            # SOLO escribir texto en columnas NE
+                            # ---------------------------------------------------
+
+                            if col.startswith("NE"):
+
+                                # Obtener número de evaluación desde el nombre de la columna
+                                num_match = re.search(r"\d+", col)
+                                num_ne = int(num_match.group()) if num_match else None
+
+                                texto_aprendizaje = ""
+                                if num_ne is not None and 1 <= num_ne <= len(aprendizajes_por_evaluacion):
+                                    texto_aprendizaje = aprendizajes_por_evaluacion[num_ne - 1]
+
+                                texto_aprendizaje = str(texto_aprendizaje or "")
+
+                                # Preferir textarea específico por evaluación (ej: #txtN2), fallback a <textarea>
+                                textarea = None
+                                if num_ne is not None:
+                                    selector = f"#txtN{num_ne}"
+                                    try:
+                                        textarea = WebDriverWait(self.driver, 5).until(
+                                            EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                                        )
+                                    except TimeoutException:
+                                        textarea = None
+
+                                if textarea is None:
+                                    textarea = WebDriverWait(self.driver, 10).until(
+                                        EC.presence_of_element_located((By.TAG_NAME, "textarea"))
+                                    )
+
+                                textarea.clear()
+                                textarea.send_keys(texto_aprendizaje)
+                            
+                            time.sleep(3)
+
+                            # Buscar botón guardar directamente por XPath
+                            guardar_btn = WebDriverWait(self.driver, 10).until(
+                            EC.element_to_be_clickable(
+                            (By.XPATH, '//*[@id="btnGuardarAprendizajes"]')
+                            )
+                            )
+                            guardar_btn.click()
+                            time.sleep(2)
+
+                            # Volver al documento principal
+                            self.driver.switch_to.default_content()
+
+                            time.sleep(2)
+
+                    time.sleep(2)
 
                 except UnexpectedAlertPresentException:
+
                     try:
                         alert = self.driver.switch_to.alert
                         alert.accept()
+
                     except NoAlertPresentException:
                         pass
+
                     continue
 
                 except TimeoutException:
+
                     print(f"  ✗ timeout en fila {i}, columna {col}")
+                    self.driver.switch_to.default_content()
                     continue
 
                 except Exception as e:
+
                     print(f"Error en fila {i}, columna {col}: {e}")
+                    self.driver.switch_to.default_content()
                     continue
 
+    
+
+    
 
 class UploadIEFs:
     
