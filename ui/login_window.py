@@ -16,41 +16,89 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, WebDriverException
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CREDENTIALS_FILE = os.path.join(BASE_DIR, "credentials.json")
+# Servicio exclusivo de Selene; almacenamiento protegido del usuario de Windows.
+CREDENTIAL_SERVICE = "Selene2.0.CiDi"
+CREDENTIAL_ACCOUNT = "ultimo_inicio"
 
-# Configuración de CustomTkinter
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
 
+def _almacen_windows():
+    if sys.platform != "win32":
+        raise RuntimeError("El almacenamiento seguro requiere Windows")
+    # Backend explícito: nunca usar un backend alternativo de texto plano.
+    from keyring.backends.Windows import WinVaultKeyring
+    return WinVaultKeyring()
+
 
 def guardar_credenciales(user, password):
-    """Guarda las credenciales en un archivo JSON"""
-    try:
-        with open(CREDENTIALS_FILE, "w", encoding="utf-8") as f:
-            json.dump(
-                {"user": user, "pass": password},
-                f,
-                ensure_ascii=False,
-                indent=2
-            )
-    except Exception as e:
-        print(f"Error guardando credenciales: {e}")
+    """Guarda y verifica ambos datos en el Administrador de credenciales."""
+    almacen = _almacen_windows()
+    contenido = json.dumps({"user": user, "pass": password}, ensure_ascii=False)
+    almacen.set_password(CREDENTIAL_SERVICE, CREDENTIAL_ACCOUNT, contenido)
+    if almacen.get_password(CREDENTIAL_SERVICE, CREDENTIAL_ACCOUNT) != contenido:
+        raise RuntimeError("No se pudo verificar el guardado seguro")
+
+
+def _leer_datos(contenido):
+    datos = json.loads(contenido)
+    user, password = datos.get("user", ""), datos.get("pass", "")
+    if not isinstance(user, str) or not isinstance(password, str):
+        raise ValueError("Formato de credenciales inválido")
+    return user, password
+
+
+def _archivos_anteriores():
+    # No recorrer carpetas ajenas ni antiguas extracciones temporales.
+    rutas = [os.path.join(BASE_DIR, "credentials.json")]
+    if getattr(sys, "frozen", False):
+        carpeta = os.path.dirname(sys.executable)
+        rutas.extend([
+            os.path.join(carpeta, "credentials.json"),
+            os.path.join(carpeta, "ui", "credentials.json"),
+            os.path.join(carpeta, "_internal", "ui", "credentials.json"),
+        ])
+    return list(dict.fromkeys(rutas))
 
 
 def cargar_credenciales():
-    """Carga las credenciales desde el archivo JSON"""
-    if not os.path.exists(CREDENTIALS_FILE):
-        return "", ""
-
+    """Devuelve usuario, contraseña y avisos sin exponer valores secretos."""
+    avisos = []
     try:
-        with open(CREDENTIALS_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data.get("user", ""), data.get("pass", "")
-    except Exception as e:
-        print(f"Error cargando credenciales: {e}")
-        return "", ""
+        contenido = _almacen_windows().get_password(
+            CREDENTIAL_SERVICE, CREDENTIAL_ACCOUNT)
+        user, password = _leer_datos(contenido) if contenido else ("", "")
+    except Exception:
+        return "", "", [
+            "No se pudo leer el Administrador de credenciales de Windows. "
+            "Podés ingresar los datos manualmente. Si existe credentials.json, "
+            "sigue conteniendo los datos antiguos sin protección."
+        ]
 
+    for ruta in _archivos_anteriores():
+        if not os.path.isfile(ruta):
+            continue
+        try:
+            with open(ruta, encoding="utf-8") as archivo:
+                anterior_user, anterior_pass = _leer_datos(archivo.read())
+            if not anterior_user or not anterior_pass:
+                raise ValueError("Archivo incompleto")
+            if user and (user, password) != (anterior_user, anterior_pass):
+                avisos.append(
+                    "Hay un credentials.json con datos distintos a los guardados "
+                    "en Windows. No se migró ni eliminó; revisalo y borralo manualmente.")
+                continue
+            guardar_credenciales(anterior_user, anterior_pass)
+            user, password = anterior_user, anterior_pass
+            # Solo eliminar después de verificar la copia protegida.
+            os.remove(ruta)
+        except Exception:
+            avisos.append(
+                "No se pudo completar la migración o eliminación de credentials.json. "
+                "El archivo puede seguir conteniendo la contraseña sin protección. "
+                "Revisalo antes de distribuir la aplicación.")
+    return user, password, avisos
 
 
 class LoginWindow:
@@ -59,7 +107,7 @@ class LoginWindow:
          # Establecer ícono
         set_window_icon(self.root)
 
-        
+        self.root.bind("<Return>", self._login_con_enter)
         self.root.title("Selene 2.0 – Inicio de sesión")
         self.root.geometry("450x700")
         self.root.resizable(True, True)
@@ -219,7 +267,10 @@ class LoginWindow:
         self.entry_password.pack(pady=(0, 25), padx=20)
         
         # Cargar credenciales guardadas
-        user, password = cargar_credenciales()
+        user, password, avisos = cargar_credenciales()
+        if avisos:
+            self.root.after(0, lambda: messagebox.showwarning(
+                "Credenciales guardadas", "\n\n".join(avisos), parent=self.root))
         if user:
             self.entry_usuario.insert(0, user)
         if password:
@@ -241,6 +292,7 @@ class LoginWindow:
             command=self.iniciar_sesion
         )
         self.btn_login.pack(pady=(20, 0))
+        self.root.bind("<Return>", self._login_con_enter)
         
         # Decoración inferior
         footer = ctk.CTkLabel(
@@ -268,6 +320,11 @@ class LoginWindow:
             daemon=True
         ).start()
 
+    def _login_con_enter(self, event):
+        if self.btn_login.cget("state") != "disabled":
+            self.iniciar_sesion()
+        return "break"
+
     def _login_thread(self):
         user = self.entry_usuario.get()
         password = self.entry_password.get()
@@ -279,8 +336,16 @@ class LoginWindow:
             messagebox.showerror("Error", "Completar usuario y contraseña")
             return
         
-        guardar_credenciales(user, password)
-        
+        try:
+            guardar_credenciales(user, password)
+        except Exception:
+            # Continuar el login sin crear ningún archivo con la contraseña.
+            self.root.after(0, lambda: messagebox.showwarning(
+                "No se guardaron las credenciales",
+                "Windows no pudo guardar los datos de forma segura. "
+                "El inicio de sesión continuará, pero tendrás que ingresarlos "
+                "de nuevo la próxima vez.", parent=self.root))
+
         driver = None
         try:
             login = Login()
